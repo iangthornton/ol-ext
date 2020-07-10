@@ -54,7 +54,8 @@ var ol_interaction_Split = function(options) {
   this.tolerance_ = options.tolerance || 1e-10;
   // Cursor
   this.cursor_ = options.cursor;
-
+  // Whether or not to interact with features
+  this.interact_ = options.interact === false ? false : true;
   // List of source to split
   this.sources_ = options.sources ? (options.sources instanceof Array) ? options.sources:[options.sources] : [];
 
@@ -219,9 +220,11 @@ ol_interaction_Split.prototype.handleDownEvent = function(evt) {
       }
       self.dispatchEvent({ type:'beforesplit', original: current.feature, features: tosplit });
       current.source.dispatchEvent({ type:'beforesplit', original: current.feature, features: tosplit });
-      current.source.removeFeature(current.feature);
-      for (i=0; i<tosplit.length; i++) {
-        current.source.addFeature(tosplit[i]);
+      if (this.interact_) {
+        current.source.removeFeature(current.feature);
+        for (i=0; i<tosplit.length; i++) {
+          current.source.addFeature(tosplit[i]);
+        }
       }
       self.dispatchEvent({ type:'aftersplit', original: current.feature, features: tosplit });
       current.source.dispatchEvent({ type:'aftersplit', original: current.feature, features: tosplit });
