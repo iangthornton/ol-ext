@@ -1,7 +1,7 @@
 /**
  * ol-ext - A set of cool extensions for OpenLayers (ol) in node modules structure
  * @description ol3,openlayers,popup,menu,symbol,renderer,filter,canvas,interaction,split,statistic,charts,pie,LayerSwitcher,toolbar,animation
- * @version v3.1.12
+ * @version v3.1.13
  * @author Jean-Marc Viglino
  * @see https://github.com/Viglino/ol-ext#,
  * @license BSD-3-Clause
@@ -2214,7 +2214,6 @@ ol.control.LayerSwitcher.prototype._setLayerForLI = function(li, layer) {
   }
   // Other properties
   listeners.push(layer.on('propertychange', (function(e) {
-    console.log('change',e)
     if (e.key === 'displayInLayerSwitcher'
       || e.key === 'openInLayerSwitcher') {
       this.drawPanel(e);
@@ -7226,8 +7225,13 @@ ol.control.Print.prototype.print = function(options) {
  * @constructor
  * @extends {ol.control.Control}
  * @fires  over, out, show
- * @param {Object=} _ol_control_ opt_options.
- *
+ * @param {Object=} options
+ *  @param {string} className
+ *  @param {ol.style.Style} style style to draw the profil
+ *  @param {*} info keys/values for i19n
+ *  @param {number} width
+ *  @param {number} height
+ *  @parma {ol.Feature} feature the feature to draw profil
  */
 ol.control.Profil = function(opt_options) {
   var options = opt_options || {};
@@ -7250,6 +7254,18 @@ ol.control.Profil = function(opt_options) {
     this.button.addEventListener("touchstart", click_touchstart_function);
     element.appendChild(this.button);
   }
+  if (options.style instanceof ol.style.Style) {
+    this._style = options.style;
+  } else {
+    this._style = new ol.style.Style({
+      text: new ol.style.Text(),
+      stroke: new ol.style.Stroke({
+        width: 1.5,
+        color: '#369'
+      })
+    });
+  }
+  if (!this._style.getText()) this._style.setText(new ol.style.Text());
   var div_inner = document.createElement("div");
       div_inner.classList.add("ol-inner");
       element.appendChild(div_inner);
@@ -7490,7 +7506,7 @@ ol.control.Profil.prototype.setGeometry = function(g, options) {
   w -= this.margin_.right + this.margin_.left;
   h -= this.margin_.top + this.margin_.bottom;
   // Draw axes
-  ctx.strokeStyle = "#000";
+  ctx.strokeStyle = this._style.getText().getFill().getColor() || '#000';
   ctx.lineWidth = 0.5*ratio;
   ctx.beginPath();
   ctx.moveTo(0,0); ctx.lineTo(0,-h);
@@ -7540,11 +7556,31 @@ ol.control.Profil.prototype.setGeometry = function(g, options) {
   var scy = -h/(zmax-zmin);
   var dy = this.dy_ = -zmin*scy;
   this.scale_ = [scx,scy];
+  // Draw Path
+  ctx.beginPath();
+  for (i=0; p=t[i]; i++) {
+    if (i==0) ctx.moveTo(p[0]*scx,p[1]*scy+dy);
+    else ctx.lineTo(p[0]*scx,p[1]*scy+dy);
+  }
+  if (this._style.getStroke()) {
+    ctx.strokeStyle = this._style.getStroke().getColor() || '#000';
+    ctx.lineWidth = this._style.getStroke().getWidth() * ratio;
+    ctx.setLineDash([]);
+    ctx.stroke();
+  }
+  // Fill path
+  if (this._style.getFill()) {
+    ctx.fillStyle = this._style.getFill().getColor() || '#000';
+    ctx.Style = this._style.getFill().getColor() || '#000';
+    ctx.lineTo(t[t.length-1][0]*scx, 0);
+    ctx.lineTo(t[0][0]*scx, 0);
+    ctx.fill();
+  }
   // Draw
-  ctx.font = (10*ratio)+"px arial";
-  ctx.textAlign = "right";
-  ctx.textBaseline = "middle";
-  ctx.fillStyle="#000";
+  ctx.font = (10*ratio)+'px arial';
+  ctx.textAlign = 'right';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = this._style.getText().getFill().getColor() || '#000';
   // Scale Z
   ctx.beginPath();
   for (i=zmin; i<=zmax; i+=grad) {
@@ -7582,16 +7618,6 @@ ol.control.Profil.prototype.setGeometry = function(g, options) {
   ctx.rotate(-Math.PI/2);
   ctx.fillText(this.info.ytitle, h/2, -this.margin_.left);
   ctx.restore();
-  ctx.stroke();
-  // 
-  ctx.strokeStyle = "#369";
-  ctx.lineWidth = 1;
-  ctx.setLineDash([]);
-  ctx.beginPath();
-  for (i=0; p=t[i]; i++) {
-    if (i==0) ctx.moveTo(p[0]*scx,p[1]*scy+dy);
-    else ctx.lineTo(p[0]*scx,p[1]*scy+dy);
-  }
   ctx.stroke();
 };
 /** Get profil image
@@ -10962,7 +10988,6 @@ ol.control.Timeline.prototype.setDate = function(feature, options) {
  * @return {Date}
  */
 ol.control.Timeline.prototype.roundDate = function(d, stick) {
-  console.log(d)
   switch (stick) {
     case 'mn': {
       return new Date(this._roundTo(d, 60*1000));
@@ -11553,27 +11578,27 @@ ol.featureAnimation.prototype.animate = function (/* e */) {
  */
 /** Animate feature on a map
  * @function 
- * @fires animationstart, animationend
  * @param {ol.Feature} feature Feature to animate
  * @param {ol.featureAnimation|Array<ol.featureAnimation>} fanim the animation to play
  * @return {olx.animationControler} an object to control animation with start, stop and isPlaying function
  */
 ol.Map.prototype.animateFeature = function(feature, fanim) {
-  // Animate on last visible layer
-  function animLayer(layers) {
-    for (var l, i=layers.length-1; l=layers[i]; i--) {
-      if (l.getVisible()) {
-        if (l.getLayers) {
-          if (animLayer(l.getLayers().getArray())) return true;
-        } else {
-          var controller = l.animateFeature(feature, fanim);
-          return controller;
-        }
-      }
-    }
-    return false;
+  // Get or create an animation layer associated with the map 
+  var layer = this._featureAnimationLayer;
+  if (!layer) {
+    layer = this._featureAnimationLayer = new ol.layer.Vector({ source: new ol.source.Vector() });
+    layer.setMap(this);
   }
-  return animLayer(this.getLayers().getArray());
+  // Animate feature on this layer
+  layer.getSource().addFeature(feature);
+  var listener = fanim.on('animationend', function(e) {
+    if (e.feature===feature) {
+      // Remove feature on end
+      layer.getSource().removeFeature(feature);
+      ol.Observable.unByKey(listener);
+    }
+  });
+  layer.animateFeature(feature, fanim);
 };
 /** Animate feature on a vector layer 
  * @fires animationstart, animationend
@@ -13161,7 +13186,7 @@ ol.filter.Texture.prototype.postcompose = function(e)
  * @param {*} options options.
  *  @param {number} options.decimals number of decimals to save, default 7 for EPSG:4326, 2 for other projections
  *  @param {boolean|Array<*>} options.deleteNullProperties An array of property values to remove, if false, keep all properties, default [null,undefined,""]
- *  @param {boolean|Array<*>} options.extended Decode/encode extended GeoJSON with foreign members (id, bbox, title, etc.), default false;
+ *  @param {boolean|Array<*>} options.extended Decode/encode extended GeoJSON with foreign members (id, bbox, title, etc.), default false
  *  @param {Array<string>|function} options.whiteList A list of properties to keep on features when encoding or a function that takes a property name and retrun true if the property is whitelisted
  *  @param {Array<string>|function} options.blackList A list of properties to remove from features when encoding or a function that takes a property name and retrun true if the property is blacklisted
  *  @param {ol.ProjectionLike} options.dataProjection Projection of the data we are reading. If not provided `EPSG:4326`
@@ -13201,24 +13226,23 @@ ol.format.GeoJSONX.prototype._radix =
 ol.format.GeoJSONX.prototype._size = ol.format.GeoJSONX.prototype._radix.length;
 /** GeoSJON types */
 ol.format.GeoJSONX.prototype._type = {
-  "Point": "p",
-  "LineString": "L",
-  "Polygon": "P",
-  "MultiPoint": "Mp",
-  "MultiLineString": "ML",
-  "MultiPolygon": "MP",
-  "GeometryCollection": "" // Not supported
+  "Point": 0,
+  "LineString": 1,
+  "Polygon": 2,
+  "MultiPoint": 3,
+  "MultiLineString": 4,
+  "MultiPolygon": 5,
+  "GeometryCollection": null // Not supported
 };
 /** GeoSJONX types */
-ol.format.GeoJSONX.prototype._toType = {
-  "p": "Point",
-  "L": "LineString",
-  "P": "Polygon",
-  "Mp": "MultiPoint",
-  "ML": "MultiLineString",
-  "MP": "MultiPolygon",
-  "": "GeometryCollection" // Not supported
-};
+ol.format.GeoJSONX.prototype._toType = [
+  "Point",
+  "LineString",
+  "Polygon",
+  "MultiPoint",
+  "MultiLineString",
+  "MultiPolygon"
+];
 /** Encode a number
  * @param {number} number Number to encode
  * @private {number} decimals Number of decimals
@@ -13346,9 +13370,9 @@ ol.format.GeoJSONX.prototype.writeFeaturesObject = function (features, options) 
   this._hash = {};
   var geojson = ol.format.GeoJSON.prototype.writeFeaturesObject.call(this, features, options);
   geojson.decimals = this._decimals;
-  geojson.hashProperties = {};
+  geojson.hashProperties = [];
   Object.keys(this._hash).forEach(function(k) {
-    geojson.hashProperties[this._hash[k]] = k;
+    geojson.hashProperties.push(k);
   }.bind(this));
   this._count = 0;
   this._hash = {};
@@ -13371,12 +13395,12 @@ ol.format.GeoJSONX.prototype.writeFeatureObject = function(source, options) {
   if (f0.type !== 'Feature') throw 'GeoJSONX doesn\'t support '+f0.type+'.';
   var f = [];
   // Encode geometry
-  if (f0.geometry.type==='GeometryCollection') {
-    throw 'GeoJSONX doesn\'t support '+f0.geometry.type+'.';
-  } 
   if (f0.geometry.type==='Point') {
     f.push(this.encodeCoordinates(f0.geometry.coordinates, this._decimals));
   } else {
+    if (!this._type[f0.geometry.type]) {
+      throw 'GeoJSONX doesn\'t support '+f0.geometry.type+'.';
+    }
     f.push ([
       this._type[f0.geometry.type],
       this.encodeCoordinates(f0.geometry.coordinates, this._decimals)
@@ -13385,20 +13409,18 @@ ol.format.GeoJSONX.prototype.writeFeatureObject = function(source, options) {
   // Encode properties
   var k;
   var prop = [];
-  var keys = [];
   for (k in f0.properties) {
     if (!this._whiteList(k) || this._blackList(k)) continue;
-    if (!this._hash[k]) {
-      this._hash[k] = this._count.toString(32);
+    if (!this._hash.hasOwnProperty(k)) {
+      this._hash[k] = this._count;
       this._count++;
     }
     if (!this._deleteNull || this._deleteNull.indexOf(f0.properties[k])<0) {
-      prop.push (f0.properties[k]);
-      keys.push(this._hash[k]);
+      prop.push (this._hash[k], f0.properties[k]);
     }
   }
+  // Create prop table
   if (prop.length || this._extended) {
-    prop.unshift(keys.join(','));
     f.push(prop);
   }
   // Other properties (id, title, bbox, centerline...
@@ -13442,10 +13464,10 @@ ol.format.GeoJSONX.prototype.writeGeometryObject = function(source, options) {
  * @api
  */
 ol.format.GeoJSONX.prototype.readFeaturesFromObject = function (object, options) {
-  this._hashProperties = object.hashProperties || {};
+  this._hashProperties = object.hashProperties || [];
   options = options || {};
   options.decimals = parseInt(object.decimals);
-  if (!options.decimals) throw 'Bad file format...';
+  if (!options.decimals && options.decimals!==0) throw 'Bad file format...';
   var features = ol.format.GeoJSON.prototype.readFeaturesFromObject.call(this, object, options);
   return features;
 };
@@ -13461,21 +13483,20 @@ ol.format.GeoJSONX.prototype.readFeatureFromObject = function (f0, options) {
   if (typeof(f0[0]) === 'string') {
     f.geometry = {
       type: 'Point',
-      coordinates: this.decodeCoordinates(f0[0], options.decimals || this.decimals)
+      coordinates: this.decodeCoordinates(f0[0], typeof(options.decimals) === 'number' ? options.decimals : this.decimals)
     }  
   } else {
     f.geometry = {
       type: this._toType[f0[0][0]],
-      coordinates: this.decodeCoordinates(f0[0][1], options.decimals || this.decimals)
+      coordinates: this.decodeCoordinates(f0[0][1], typeof(options.decimals) === 'number' ? options.decimals : this.decimals)
     }
   }
   if (this._hashProperties && f0[1]) {
     f.properties = {};
-    var keys;
-    f0[1].forEach(function(p, i) {
-      if (i===0) keys = p.split(',');
-      else f.properties[this._hashProperties[keys[i-1]]] = p;
-    }.bind(this));
+    var t = f0[1];
+    for (var i=0; i<t.length; i+=2) {
+      f.properties[this._hashProperties[t[i]]] = t[i+1];
+    }
   } else {
     f.properties = f0[1];
   }
@@ -13613,7 +13634,6 @@ ol.format.GeoRSS.prototype.readFeature = function(source, options) {
       coord.push([parseFloat(temp[i+1]), parseFloat(temp[i])]) 
     }
     g = new ol.geom.Polygon([coord]);
-    console.log(temp,coord)
     f.unset('georss:polygon');
   } else if (f.get('georss:where')) {
     // GML
@@ -13646,9 +13666,9 @@ ol.format.GeoRSS.prototype.readFeatures = function(source, options) {
   if (typeof(source)==='string') {
     var parser = new DOMParser();
     var xmlDoc = parser.parseFromString(source,"text/xml");
-    items = xmlDoc.getElementsByTagName('item');
+    items = xmlDoc.getElementsByTagName(this.getDocumentItemsTagName(xmlDoc));
   } else if (source instanceof Document) {
-    items = source.getElementsByTagName('item');
+    items = source.getElementsByTagName(this.getDocumentItemsTagName(source));
   } else if (source instanceof Node) {
     items = source;
   } else {
@@ -13661,6 +13681,21 @@ ol.format.GeoRSS.prototype.readFeatures = function(source, options) {
   }
   return features;
 };
+/**
+ * Get the tag name for the items in the XML Document depending if we are
+ * dealing with an atom base document or not.
+ * @param {Document} xmlDoc document to extract the tag name for the items
+ * @return {string} tag name
+ * @private
+ */
+ol.format.GeoRSS.prototype.getDocumentItemsTagName = function(xmlDoc) {
+  switch (xmlDoc.documentElement.tagName) {
+    case 'feed':
+      return 'entry';
+    default:
+      return 'item';
+  }
+}
 
 /*	Copyright (c) 2016 Jean-Marc VIGLINO, 
 	released under the CeCILL-B license (French BSD license)
@@ -17859,17 +17894,24 @@ ol.interaction.Split.prototype.setMap = function(map) {
  * @private
  */
 ol.interaction.Split.prototype.getClosestFeature = function(e) {
-  var f, c, g, d = this.snapDistance_+1;
-  for (var i=0; i<this.sources_.length; i++) {
-    var source = this.sources_[i];
-    f = source.getClosestFeatureToCoordinate(e.coordinate);
-    if (f && f.getGeometry().splitAt) {
-      c = f.getGeometry().getClosestPoint(e.coordinate);
-      g = new ol.geom.LineString([e.coordinate,c]);
-      d = g.getLength() / e.frameState.viewState.resolution;
-      break;
+  var source, f, c, g, d = this.snapDistance_+1;
+  // Look for closest point in the sources
+  this.sources_.forEach(function(si) {
+    var fi = si.getClosestFeatureToCoordinate(e.coordinate);
+    if (fi && fi.getGeometry().splitAt) {
+      var ci = fi.getGeometry().getClosestPoint(e.coordinate);
+      var gi = new ol.geom.LineString([e.coordinate,ci]);
+      var di = gi.getLength() / e.frameState.viewState.resolution;
+      if (di < d) {
+        source = si;
+        d = di;
+        f = fi;
+        g = gi;
+        c = ci;
+      }
     }
-  }
+  });
+  // Snap ?
   if (d > this.snapDistance_) {
     return false;
   } else {
@@ -18675,12 +18717,14 @@ ol.interaction.Transform.prototype.Cursors = {
  * @api stable
  */
 ol.interaction.Transform.prototype.setMap = function(map) {
-  if (this.getMap()) {
-    this.getMap().removeLayer(this.overlayLayer_);
-    if (this.previousCursor_) {
-      this.getMap().getTargetElement().style.cursor = this.previousCursor_;
-      this.previousCursor_ = undefined;
+  var oldMap = this.getMap();
+  if (oldMap) {
+    var targetElement = oldMap.getTargetElement();
+    oldMap.removeLayer(this.overlayLayer_);
+    if (this.previousCursor_ && targetElement) {
+      targetElement.style.cursor = this.previousCursor_;
     }
+    this.previousCursor_ = undefined;
   }
   ol.interaction.Pointer.prototype.setMap.call (this, map);
   this.overlayLayer_.setMap(map);
@@ -19312,7 +19356,16 @@ ol.interaction.UndoRedo.prototype.setActive = function(active) {
  * @api stable
  */
 ol.interaction.UndoRedo.prototype.setMap = function(map) {
+  if (this._mapListener) {
+    this._mapListener.forEach(function(l) { ol.Observable.unByKey(l); })
+  }
+  this._mapListener = [];
   ol.interaction.Interaction.prototype.setMap.call (this, map);
+  // Watch blocks
+  if (map) {
+    this._mapListener.push(map.on('undoblockstart', this.blockStart.bind(this)));
+    this._mapListener.push(map.on('undoblockend', this.blockEnd.bind(this)));
+  }
   // Watch sources
   this._watchSources();
   this._watchInteractions();
@@ -27902,6 +27955,13 @@ ol.style.Photo = function(options) {
   this.renderPhoto_();
 };
 ol.ext.inherits(ol.style.Photo, ol.style.RegularShape);
+/** Set phptp offset
+ * @param {ol.pixel} offset
+ */
+ol.style.Photo.prototype.setOffset = function(offset) {
+  this.offset_ = [offset[0]||0, offset[1]||0];
+  this.renderPhoto_();
+};
 /**
  * Clones the style. 
  * @return {ol.style.Photo}
@@ -28050,10 +28110,11 @@ ol.style.Photo.prototype.renderPhoto_ = function() {
   }
   // Set anchor
   var a = this.getAnchor();
-  a[0] = (canvas.width - this.shadow_)/2;
-  a[1] = (canvas.height - this.shadow_)/2;
+  a[0] = (canvas.width - this.shadow_)/2  - this.offset_[0];
   if (this.sanchor_) {
-    a[1] = canvas.height - this.shadow_;
+    a[1] = canvas.height - this.shadow_ - this.offset_[1];
+  } else {
+    a[1] = (canvas.height - this.shadow_)/2 - this.offset_[1];
   }
 };
 /**
